@@ -1,16 +1,21 @@
 # agent/main.py
 # The main application for the LISE Agent.
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import requests # To send HTTP requests to the orchestrator
 import socket   # To get the local IP address
+import subprocess # To run docker-compose commands
+import os # To handle file paths
 
 # --- Pydantic Models ---
 class ConnectionRequest(BaseModel):
     display_name: str
     orchestrator_ip: str
+
+class ScenarioStartRequest(BaseModel):
+    compose_file_path: str
 
 # Create the FastAPI application instance
 app = FastAPI(
@@ -25,7 +30,8 @@ state = {
     "orchestrator_ip": None,
     "display_name": None,
     "current_scenario": None,
-    "status_message": "Disconnected"
+    "status_message": "Disconnected",
+    "active_process": None # To hold the running subprocess
 }
 
 # --- Helper Functions ---
@@ -33,7 +39,6 @@ def get_local_ip():
     """Gets the local IP address of the machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # Doesn't have to be reachable
         s.connect(('10.255.255.255', 1))
         IP = s.getsockname()[0]
     except Exception:
@@ -52,8 +57,7 @@ async def read_root():
 @app.post("/api/connect", tags=["Connection Management"])
 async def connect_to_orchestrator(conn_request: ConnectionRequest):
     """
-    Receives connection info (from its own UI later) and attempts to
-    register with the orchestrator.
+    Receives connection info and attempts to register with the orchestrator.
     """
     state["display_name"] = conn_request.display_name
     state["orchestrator_ip"] = conn_request.orchestrator_ip
@@ -66,7 +70,7 @@ async def connect_to_orchestrator(conn_request: ConnectionRequest):
     
     try:
         response = requests.post(orchestrator_url, json=agent_payload, timeout=5)
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        response.raise_for_status()
         
         state["is_connected"] = True
         state["status_message"] = f"Connected to {state['orchestrator_ip']}"
@@ -77,7 +81,51 @@ async def connect_to_orchestrator(conn_request: ConnectionRequest):
         state["is_connected"] = False
         state["status_message"] = f"Failed to connect to orchestrator: {e}"
         print(f"--- ERROR: Could not connect to orchestrator at {orchestrator_url} ---")
-        return {"status": "error", "message": state["status_message"]}
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scenario/start", tags=["Simulation Control"])
+async def start_scenario(request: ScenarioStartRequest):
+    """Receives a command from the orchestrator to start a Docker Compose scenario."""
+    compose_file = request.compose_file_path
+    if not os.path.exists(compose_file):
+        raise HTTPException(status_code=404, detail=f"Compose file not found: {compose_file}")
+
+    if state.get("active_process"):
+        raise HTTPException(status_code=400, detail="A scenario is already running.")
+
+    command = ["docker-compose", "-f", compose_file, "up", "--build", "-d"]
+    
+    try:
+        print(f"--- Starting scenario: {' '.join(command)} ---")
+        # We run this in the background ('-d' flag)
+        process = subprocess.run(command, check=True, capture_output=True, text=True)
+        state["current_scenario"] = compose_file
+        state["status_message"] = f"Running scenario: {os.path.basename(compose_file)}"
+        print(f"--- Scenario '{os.path.basename(compose_file)}' started successfully. ---")
+        return {"status": "success", "message": state["status_message"], "output": process.stdout}
+    except subprocess.CalledProcessError as e:
+        print(f"--- ERROR starting scenario: {e.stderr} ---")
+        raise HTTPException(status_code=500, detail=f"Docker Compose failed: {e.stderr}")
+
+@app.post("/api/scenario/stop", tags=["Simulation Control"])
+async def stop_scenario():
+    """Stops the currently running Docker Compose scenario."""
+    if not state.get("current_scenario"):
+        raise HTTPException(status_code=400, detail="No scenario is currently running.")
+        
+    compose_file = state["current_scenario"]
+    command = ["docker-compose", "-f", compose_file, "down"]
+    
+    try:
+        print(f"--- Stopping scenario: {' '.join(command)} ---")
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        state["current_scenario"] = None
+        state["status_message"] = "Idle"
+        print(f"--- Scenario '{os.path.basename(compose_file)}' stopped successfully. ---")
+        return {"status": "success", "message": "Scenario stopped."}
+    except subprocess.CalledProcessError as e:
+        print(f"--- ERROR stopping scenario: {e.stderr} ---")
+        raise HTTPException(status_code=500, detail=f"Docker Compose 'down' failed: {e.stderr}")
 
 
 # This block allows us to run the server directly from the script
