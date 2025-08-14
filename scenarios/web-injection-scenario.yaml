@@ -1,14 +1,13 @@
 # web-injection-scenario.yaml
 # Defines the multi-container "Web Command Injection" incident
 
-version: '3.8'
-
 services:
   # The Blue Team's vulnerable application
   blue-team-app:
     # 'build' tells Docker Compose to build this image from a Dockerfile
     build:
-      context: . # The build context is the root of the project directory
+      # FIX: The context is now '..' which means the parent directory (lise-project)
+      context: ..
       dockerfile: scenarios/Dockerfile.blue
     container_name: lise-blue-target
     networks:
@@ -17,7 +16,8 @@ services:
   # The Red Team's attacker machine
   red-team-attacker:
     build:
-      context: .
+      # FIX: The context is also changed here to the parent directory
+      context: ..
       dockerfile: scenarios/Dockerfile.red
     container_name: lise-red-attacker
     networks:
@@ -30,4 +30,3 @@ services:
 networks:
   simulation-net:
     driver: bridge
-
