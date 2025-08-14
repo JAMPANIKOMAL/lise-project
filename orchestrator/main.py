@@ -9,40 +9,44 @@ import uvicorn
 import yaml
 import os
 import requests
+import sys # New import
 from typing import List
+
+# --- Helper Function for PyInstaller ---
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 # --- Connection Manager for WebSockets ---
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
-
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
-
     async def broadcast(self, message: str):
         for connection in self.active_connections:
             await connection.send_text(message)
 
 manager = ConnectionManager()
 
-
 # --- Pydantic Models ---
 class AgentRegistration(BaseModel):
     display_name: str
     ip_address: str
-
 class SimulationRequest(BaseModel):
     agent_name: str
     scenario_name: str
-
 class LogEntry(BaseModel):
     agent_name: str
     log_line: str
-
 
 # Create the FastAPI application instance
 app = FastAPI(
@@ -52,14 +56,16 @@ app = FastAPI(
 )
 
 # --- Mount Static Files ---
-app.mount("/static", StaticFiles(directory="orchestrator/static"), name="static")
+# FIX: Use the resource_path helper to find the static directory
+app.mount("/static", StaticFiles(directory=resource_path("static")), name="static")
 
 # --- IN-MEMORY DATABASE ---
 db = { "agents": {}, "scenarios": [] }
 
 # --- Helper Functions ---
 def load_scenarios():
-    scenarios_dir = "scenarios"
+    # FIX: Use resource_path to find the scenarios directory
+    scenarios_dir = resource_path("scenarios")
     if not os.path.exists(scenarios_dir):
         print(f"--- WARNING: Scenarios directory '{scenarios_dir}' not found. ---")
         return
@@ -78,21 +84,19 @@ async def startup_event():
 
 @app.get("/", response_class=FileResponse, tags=["UI"])
 async def read_index():
-    return "orchestrator/static/index.html"
+    # FIX: Use resource_path to find the index.html file
+    return resource_path("static/index.html")
 
-# WebSocket endpoint for the UI to connect to
 @app.websocket("/ws/log-stream")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # Keep the connection alive
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print("--- UI Client disconnected from logs ---")
 
-# Endpoint for agents to post log lines to
 @app.post("/api/log", tags=["Logging"])
 async def receive_log(entry: LogEntry):
     log_message = f"[{entry.agent_name}] {entry.log_line}"
@@ -125,6 +129,7 @@ async def start_simulation(sim_request: SimulationRequest):
 
     agent_ip = agent_info["ip_address"]
     agent_url = f"http://{agent_ip}:8000/api/scenario/start"
+    # FIX: Send the absolute path from the resource_path function
     payload = {"compose_file_path": scenario_info["compose_file_path"]}
 
     try:

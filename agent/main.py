@@ -12,6 +12,17 @@ import subprocess
 import os
 import threading
 import time
+import sys # New import
+
+# --- Helper Function for PyInstaller ---
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 # --- Pydantic Models ---
 class ConnectionRequest(BaseModel):
@@ -29,7 +40,8 @@ app = FastAPI(
 )
 
 # --- Mount Static Files ---
-app.mount("/static", StaticFiles(directory="agent/static"), name="static")
+# FIX: Use the resource_path helper to find the static directory
+app.mount("/static", StaticFiles(directory=resource_path("static")), name="static")
 
 # --- AGENT STATE ---
 state = {
@@ -38,7 +50,7 @@ state = {
     "display_name": None,
     "current_scenario": None,
     "status_message": "Disconnected",
-    "log_thread": None # To hold the running log thread
+    "log_thread": None
 }
 
 # --- Helper Functions ---
@@ -54,17 +66,11 @@ def get_local_ip():
     return IP
 
 def stream_logs(compose_file, agent_name, orchestrator_ip):
-    """A function to be run in a background thread to stream logs."""
     log_url = f"http://{orchestrator_ip}:8080/api/log"
-    
-    # Give Docker a moment to start the containers before streaming logs
     time.sleep(3) 
-    
     command = ["docker-compose", "-f", compose_file, "logs", "-f", "--no-log-prefix"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-
     print(f"--- Starting log stream for {agent_name} ---")
-    
     for line in iter(process.stdout.readline, ''):
         if not line:
             break
@@ -72,19 +78,17 @@ def stream_logs(compose_file, agent_name, orchestrator_ip):
             log_entry = {"agent_name": agent_name, "log_line": line.strip()}
             requests.post(log_url, json=log_entry, timeout=2)
         except requests.exceptions.RequestException:
-            # If we can't send logs, we just print an error and continue trying
             print(f"--- WARN: Could not send log line to orchestrator at {log_url} ---")
-            
     process.stdout.close()
     process.wait()
     print(f"--- Log stream for {agent_name} ended. ---")
-
 
 # --- API ENDPOINTS ---
 
 @app.get("/", response_class=FileResponse, tags=["UI"])
 async def read_index():
-    return "agent/static/index.html"
+    # FIX: Use resource_path to find the index.html file
+    return resource_path("static/index.html")
 
 @app.post("/api/connect", tags=["Connection Management"])
 async def connect_to_orchestrator(conn_request: ConnectionRequest):
@@ -109,16 +113,12 @@ async def start_scenario(request: ScenarioStartRequest, background_tasks: Backgr
         raise HTTPException(status_code=404, detail=f"Compose file not found: {compose_file}")
     if state.get("current_scenario"):
         raise HTTPException(status_code=400, detail="A scenario is already running.")
-
     command = ["docker-compose", "-f", compose_file, "up", "--build", "-d"]
     try:
         print(f"--- Starting scenario: {' '.join(command)} ---")
         subprocess.run(command, check=True, capture_output=True, text=True)
-        
         state["current_scenario"] = compose_file
         state["status_message"] = f"Running scenario: {os.path.basename(compose_file)}"
-        
-        # Start the log streaming in a background thread
         log_thread = threading.Thread(
             target=stream_logs,
             args=(compose_file, state["display_name"], state["orchestrator_ip"]),
@@ -126,7 +126,6 @@ async def start_scenario(request: ScenarioStartRequest, background_tasks: Backgr
         )
         state["log_thread"] = log_thread
         log_thread.start()
-
         print(f"--- Scenario '{os.path.basename(compose_file)}' started successfully. ---")
         return {"status": "success", "message": "Scenario started."}
     except subprocess.CalledProcessError as e:
@@ -144,7 +143,6 @@ async def stop_scenario():
         state["current_scenario"] = None
         state["status_message"] = "Idle"
         if state.get("log_thread") and state["log_thread"].is_alive():
-             # The thread will stop on its own as the 'logs -f' command ends
              state["log_thread"] = None
         print(f"--- Scenario '{os.path.basename(compose_file)}' stopped successfully. ---")
         return {"status": "success", "message": "Scenario stopped."}
