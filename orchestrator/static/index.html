@@ -20,39 +20,46 @@
             <p class="text-gray-500">Local Incident Simulation Environment</p>
         </header>
 
-        <!-- Section 1: Connected Agents -->
-        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
-            <h2 class="text-2xl font-semibold mb-4 border-b pb-2">1. Connected Agents</h2>
-            <div id="agent-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 min-h-[5rem]">
-                <!-- Agents will be dynamically inserted here -->
-                <p id="no-agents-msg" class="text-gray-400 col-span-full">Waiting for agents to connect...</p>
-            </div>
-        </div>
-
-        <!-- Section 2: Mission Setup -->
-        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
-            <h2 class="text-2xl font-semibold mb-4 border-b pb-2">2. Mission Setup</h2>
-            <div class="grid md:grid-cols-2 gap-8">
-                <div>
-                    <label for="scenario-select" class="block text-sm font-medium mb-1">Select Incident:</label>
-                    <select id="scenario-select" class="w-full p-2 border border-gray-300 rounded-md bg-gray-50"></select>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div>
+                <!-- Section 1: Connected Agents -->
+                <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+                    <h2 class="text-2xl font-semibold mb-4 border-b pb-2">1. Connected Agents</h2>
+                    <div id="agent-list" class="grid grid-cols-2 md:grid-cols-3 gap-4 min-h-[5rem]">
+                        <p id="no-agents-msg" class="text-gray-400 col-span-full">Waiting for agents to connect...</p>
+                    </div>
                 </div>
-                <div>
-                    <h3 class="text-lg font-medium mb-2">Assign Teams:</h3>
-                    <p class="text-sm text-gray-500">Click on a connected agent above to assign them to a team.</p>
-                    <div class="mt-2 space-y-1">
-                        <p><b>Red Team:</b> <span id="red-team-list" class="text-red-600 font-semibold">None</span></p>
-                        <p><b>Blue Team:</b> <span id="blue-team-list" class="text-blue-600 font-semibold">None</span></p>
+
+                <!-- Section 2: Mission Setup -->
+                <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+                    <h2 class="text-2xl font-semibold mb-4 border-b pb-2">2. Mission Setup</h2>
+                    <div>
+                        <label for="scenario-select" class="block text-sm font-medium mb-1">Select Incident:</label>
+                        <select id="scenario-select" class="w-full p-2 border border-gray-300 rounded-md bg-gray-50"></select>
+                    </div>
+                    <div class="mt-4">
+                        <h3 class="text-lg font-medium mb-2">Assign Teams:</h3>
+                        <p class="text-sm text-gray-500">Click on a connected agent above to assign them to a team.</p>
+                        <div class="mt-2 space-y-1">
+                            <p><b>Red Team:</b> <span id="red-team-list" class="text-red-600 font-semibold">Attacker (Orchestrator)</span></p>
+                            <p><b>Blue Team:</b> <span id="blue-team-list" class="text-blue-600 font-semibold">None</span></p>
+                        </div>
+                    </div>
+                    <div class="text-center mt-6">
+                        <button id="start-btn" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg shadow-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                            Launch Simulation
+                        </button>
                     </div>
                 </div>
             </div>
-        </div>
-        
-        <!-- Section 3: Launch Control -->
-        <div class="text-center">
-            <button id="start-btn" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg shadow-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
-                Launch Simulation
-            </button>
+
+            <!-- Section 3: Live Log Viewer -->
+            <div class="bg-gray-900 text-white font-mono p-6 rounded-lg shadow-md">
+                <h2 class="text-2xl font-semibold mb-4 border-b border-gray-700 pb-2 text-green-400">Live Event Log</h2>
+                <div id="log-viewer" class="h-96 overflow-y-auto text-sm">
+                    <!-- Logs will be dynamically inserted here -->
+                </div>
+            </div>
         </div>
     </div>
 
@@ -64,20 +71,15 @@
         const redTeamListSpan = document.getElementById('red-team-list');
         const blueTeamListSpan = document.getElementById('blue-team-list');
         const startBtn = document.getElementById('start-btn');
+        const logViewer = document.getElementById('log-viewer');
 
         // --- APPLICATION STATE ---
-        let state = {
-            agents: {},
-            scenarios: [],
-            // Using a single agent for now for simplicity
-            selectedAgent: null
-        };
+        let state = { agents: {}, scenarios: [], selectedAgent: null };
 
         // --- RENDER FUNCTIONS ---
         function renderAgents() {
-            agentListDiv.innerHTML = ''; // Clear the list
+            agentListDiv.innerHTML = '';
             const agentNames = Object.keys(state.agents);
-
             if (agentNames.length === 0) {
                 agentListDiv.appendChild(noAgentsMsg);
                 noAgentsMsg.style.display = 'block';
@@ -87,12 +89,10 @@
                     const div = document.createElement('div');
                     div.className = 'agent-box p-4 border-2 rounded-lg text-center bg-white shadow';
                     div.textContent = name;
-                    div.dataset.agentName = name; // Store the name for later
-                    
+                    div.dataset.agentName = name;
                     if (state.selectedAgent === name) {
-                        div.classList.add('selected-blue'); // Highlight if selected
+                        div.classList.add('selected-blue');
                     }
-
                     div.addEventListener('click', () => handleAgentClick(name));
                     agentListDiv.appendChild(div);
                 });
@@ -110,14 +110,19 @@
         }
         
         function handleAgentClick(name) {
-            // Simple selection logic for one agent
             state.selectedAgent = name;
             blueTeamListSpan.textContent = name;
-            redTeamListSpan.textContent = "Attacker (Orchestrator)"; // For now, assume Red Team is local
-            renderAgents(); // Re-render to show selection
+            renderAgents();
         }
 
-        // --- API FUNCTIONS ---
+        function addLog(message) {
+            const logLine = document.createElement('div');
+            logLine.textContent = message;
+            logViewer.appendChild(logLine);
+            logViewer.scrollTop = logViewer.scrollHeight;
+        }
+
+        // --- API & WEBSOCKET FUNCTIONS ---
         async function fetchApi(endpoint) {
             try {
                 const response = await fetch(endpoint);
@@ -150,24 +155,17 @@
                 alert("Please select an agent and a scenario.");
                 return;
             }
-            
             startBtn.disabled = true;
             startBtn.textContent = "Launching...";
-
             try {
                 const response = await fetch('/api/simulation/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        agent_name: state.selectedAgent,
-                        scenario_name: scenarioSelect.value
-                    })
+                    body: JSON.stringify({ agent_name: state.selectedAgent, scenario_name: scenarioSelect.value })
                 });
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.detail || "Failed to start simulation.");
-                
                 alert(`Successfully launched '${scenarioSelect.value}' on agent '${state.selectedAgent}'.`);
-
             } catch (error) {
                 console.error("Simulation start failed:", error);
                 alert(`Error: ${error.message}`);
@@ -177,13 +175,32 @@
             }
         }
 
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/log-stream`;
+            const socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                addLog('--- Log stream connected ---');
+            };
+            socket.onmessage = (event) => {
+                addLog(event.data);
+            };
+            socket.onclose = () => {
+                addLog('--- Log stream disconnected. Attempting to reconnect... ---');
+                setTimeout(connectWebSocket, 3000); // Reconnect after 3 seconds
+            };
+            socket.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+            };
+        }
+
         // --- INITIALIZATION ---
         document.addEventListener('DOMContentLoaded', () => {
-            console.log("Orchestrator UI Initialized.");
             fetchAgents();
             fetchScenarios();
-            setInterval(fetchAgents, 5000); // Poll for new agents every 5 seconds
-            
+            connectWebSocket();
+            setInterval(fetchAgents, 5000);
             startBtn.addEventListener('click', startSimulation);
         });
     </script>
