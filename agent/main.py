@@ -2,12 +2,14 @@
 # The main application for the LISE Agent.
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
-import requests # To send HTTP requests to the orchestrator
-import socket   # To get the local IP address
-import subprocess # To run docker-compose commands
-import os # To handle file paths
+import requests
+import socket
+import subprocess
+import os
 
 # --- Pydantic Models ---
 class ConnectionRequest(BaseModel):
@@ -24,6 +26,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# --- Mount Static Files ---
+app.mount("/static", StaticFiles(directory="agent/static"), name="static")
+
 # --- AGENT STATE ---
 state = {
     "is_connected": False,
@@ -31,12 +36,11 @@ state = {
     "display_name": None,
     "current_scenario": None,
     "status_message": "Disconnected",
-    "active_process": None # To hold the running subprocess
+    "active_process": None
 }
 
 # --- Helper Functions ---
 def get_local_ip():
-    """Gets the local IP address of the machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(('10.255.255.255', 1))
@@ -49,16 +53,13 @@ def get_local_ip():
 
 # --- API ENDPOINTS ---
 
-@app.get("/", tags=["Root"])
-async def read_root():
-    """A simple root endpoint to confirm the agent server is running."""
-    return {"message": "LISE Agent is running.", "state": state}
+@app.get("/", response_class=FileResponse, tags=["UI"])
+async def read_index():
+    """Serves the main agent UI."""
+    return "agent/static/index.html"
 
 @app.post("/api/connect", tags=["Connection Management"])
 async def connect_to_orchestrator(conn_request: ConnectionRequest):
-    """
-    Receives connection info and attempts to register with the orchestrator.
-    """
     state["display_name"] = conn_request.display_name
     state["orchestrator_ip"] = conn_request.orchestrator_ip
     
@@ -85,7 +86,6 @@ async def connect_to_orchestrator(conn_request: ConnectionRequest):
 
 @app.post("/api/scenario/start", tags=["Simulation Control"])
 async def start_scenario(request: ScenarioStartRequest):
-    """Receives a command from the orchestrator to start a Docker Compose scenario."""
     compose_file = request.compose_file_path
     if not os.path.exists(compose_file):
         raise HTTPException(status_code=404, detail=f"Compose file not found: {compose_file}")
@@ -97,19 +97,25 @@ async def start_scenario(request: ScenarioStartRequest):
     
     try:
         print(f"--- Starting scenario: {' '.join(command)} ---")
-        # We run this in the background ('-d' flag)
-        process = subprocess.run(command, check=True, capture_output=True, text=True)
+        # FIX: Use Popen for a non-blocking call.
+        # This starts the process and immediately moves on, without waiting for it to finish.
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # Store the process and scenario info in the state
+        state["active_process"] = process
         state["current_scenario"] = compose_file
         state["status_message"] = f"Running scenario: {os.path.basename(compose_file)}"
-        print(f"--- Scenario '{os.path.basename(compose_file)}' started successfully. ---")
-        return {"status": "success", "message": state["status_message"], "output": process.stdout}
-    except subprocess.CalledProcessError as e:
-        print(f"--- ERROR starting scenario: {e.stderr} ---")
-        raise HTTPException(status_code=500, detail=f"Docker Compose failed: {e.stderr}")
+        
+        print(f"--- Scenario '{os.path.basename(compose_file)}' launched successfully (running in background). ---")
+        return {"status": "success", "message": "Scenario launch command accepted."}
+        
+    except Exception as e:
+        print(f"--- ERROR launching scenario: {e} ---")
+        raise HTTPException(status_code=500, detail=f"Failed to start Docker Compose process: {e}")
+
 
 @app.post("/api/scenario/stop", tags=["Simulation Control"])
 async def stop_scenario():
-    """Stops the currently running Docker Compose scenario."""
     if not state.get("current_scenario"):
         raise HTTPException(status_code=400, detail="No scenario is currently running.")
         
@@ -121,12 +127,12 @@ async def stop_scenario():
         subprocess.run(command, check=True, capture_output=True, text=True)
         state["current_scenario"] = None
         state["status_message"] = "Idle"
+        state["active_process"] = None
         print(f"--- Scenario '{os.path.basename(compose_file)}' stopped successfully. ---")
         return {"status": "success", "message": "Scenario stopped."}
     except subprocess.CalledProcessError as e:
         print(f"--- ERROR stopping scenario: {e.stderr} ---")
         raise HTTPException(status_code=500, detail=f"Docker Compose 'down' failed: {e.stderr}")
-
 
 # This block allows us to run the server directly from the script
 if __name__ == "__main__":
